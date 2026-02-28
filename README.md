@@ -91,6 +91,41 @@ Then visit `http://localhost:8000`.
 - Show test metrics (accuracy + ROC-AUC + F1 etc.) from `/api/metrics`.
 - Show live inference in UI with a sample student profile.
 - Explain that real institutional data can replace synthetic data with no code changes to API contract.
+
+
+## Windows Run Commands (Recommended)
+If `uvicorn` is not recognized in CMD/PowerShell, use module mode or the launcher script:
+
+```bash
+python -m pip install -r requirements.txt
+python src/generate_demo_data.py --rows 1200 --output data/student_data.csv
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Alternative (no PATH dependency):
+
+```bash
+python run.py
+```
+
+## Troubleshooting
+### 1) `'uvicorn' is not recognized`
+This means the `uvicorn` executable is not on PATH. Use:
+- `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000`, or
+- `python run.py`
+
+### 2) `SyntaxError` in `src/train_models.py`
+If you see a mismatch error like `closing parenthesis ')' does not match opening parenthesis '{'`, your local file is likely corrupted or partially edited.
+
+Validate quickly:
+```bash
+python -m py_compile src/train_models.py
+```
+
+If it fails:
+- restore `src/train_models.py` from the latest repo commit,
+- avoid manual edits/copy-paste from formatted documents,
+- rerun `python -m py_compile src/train_models.py` and then start API again.
 ## Outputs
 After training, artifacts are saved in `artifacts/`:
 - `leaderboard.csv` - CV comparison of Logistic Regression, Random Forest, and XGBoost
