@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Student Risk Monitoring</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>Learning Analytics Student Risk Monitoring</h1>
+    <p>Train models, inspect evaluation metrics, and predict student risk from the browser.</p>
+
+    <section class="card">
+      <h2>1) Train Models</h2>
+      <button id="trainBtn">Run Training (LR + RF + XGBoost)</button>
+      <pre id="trainOut"></pre>
+    </section>
+
+    <section class="card">
+      <h2>2) Evaluation Metrics</h2>
+      <button id="metricsBtn">Load Metrics</button>
+      <pre id="metricsOut"></pre>
+    </section>
+
+    <section class="card">
+      <h2>3) Predict Single Student</h2>
+      <form id="predictForm">
+        <div class="grid">
+          <input name="attendance_pct" type="number" step="0.1" placeholder="Attendance %" required />
+          <input name="internal_score" type="number" step="0.1" placeholder="Internal score" required />
+          <input name="assignment_avg" type="number" step="0.1" placeholder="Assignment avg" required />
+          <input name="quiz_avg" type="number" step="0.1" placeholder="Quiz avg" required />
+          <input name="lms_logins_per_week" type="number" step="0.1" placeholder="LMS logins/week" required />
+          <input name="lms_hours_per_week" type="number" step="0.1" placeholder="LMS hours/week" required />
+          <input name="content_views" type="number" step="1" placeholder="Content views" required />
+          <input name="forum_posts" type="number" step="1" placeholder="Forum posts" required />
+          <input name="previous_gpa" type="number" step="0.01" placeholder="Previous GPA" required />
+          <select name="department" required>
+            <option value="CSE">CSE</option><option value="ECE">ECE</option><option value="MECH">MECH</option>
+            <option value="CIVIL">CIVIL</option><option value="EEE">EEE</option><option value="MBA">MBA</option>
+          </select>
+          <select name="hostel_resident" required>
+            <option value="yes">Hostel: yes</option><option value="no">Hostel: no</option>
+          </select>
+        </div>
+        <button type="submit">Predict Risk</button>
+      </form>
+      <pre id="predictOut"></pre>
+    </section>
+  </main>
+<script src="/static/app.js"></script>
+</body>
+</html>
