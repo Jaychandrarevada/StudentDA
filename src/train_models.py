@@ -1,0 +1,222 @@
+"""Train and compare student-risk classifiers.
+
+Usage:
+python src/train_models.py --data data/student_data.csv --target at_risk
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, classification_report, f1_score, roc_auc_score
+from sklearn.model_selection import StratifiedKFold, cross_validate, train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Train Logistic Regression, Random Forest and XGBoost models for student risk prediction."
+    )
+    parser.add_argument("--data", required=True, help="Path to CSV dataset")
+    parser.add_argument("--target", required=True, help="Target column (0/1 or boolean label)")
+    parser.add_argument(
+        "--id-columns",
+        nargs="*",
+        default=[],
+        help="Optional ID columns to drop before training (e.g., student_id)",
+    )
+    parser.add_argument("--test-size", type=float, default=0.2, help="Test split ratio")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument(
+        "--output-dir",
+        default="artifacts",
+        help="Directory to store metrics and the best model pipeline",
+    )
+    return parser.parse_args()
+
+
+def build_preprocessor(df: pd.DataFrame) -> ColumnTransformer:
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    categorical_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
+
+    numeric_transformer = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
+        ]
+    )
+    categorical_transformer = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore")),
+        ]
+    )
+
+    return ColumnTransformer(
+        transformers=[
+            ("num", numeric_transformer, numeric_cols),
+            ("cat", categorical_transformer, categorical_cols),
+        ]
+    )
+
+
+def build_models(seed: int) -> dict[str, object]:
+    return {
+        "logistic_regression": LogisticRegression(
+            max_iter=1500,
+            class_weight="balanced",
+            solver="lbfgs",
+            random_state=seed,
+        ),
+        "random_forest": RandomForestClassifier(
+            n_estimators=500,
+            max_depth=None,
+            min_samples_split=4,
+            min_samples_leaf=2,
+            class_weight="balanced_subsample",
+            random_state=seed,
+            n_jobs=-1,
+        ),
+        "xgboost": XGBClassifier(
+            n_estimators=600,
+            learning_rate=0.05,
+            max_depth=6,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_lambda=1.0,
+            objective="binary:logistic",
+            eval_metric="logloss",
+            random_state=seed,
+            n_jobs=-1,
+        ),
+    }
+
+
+def evaluate_models(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    preprocessor: ColumnTransformer,
+    models: dict[str, object],
+    seed: int,
+) -> pd.DataFrame:
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
+    rows = []
+
+    for name, model in models.items():
+        pipeline = Pipeline(steps=[("prep", preprocessor), ("model", model)])
+        scores = cross_validate(
+            pipeline,
+            X_train,
+            y_train,
+            cv=cv,
+            n_jobs=-1,
+            scoring={"accuracy": "accuracy", "f1": "f1", "roc_auc": "roc_auc"},
+        )
+        rows.append(
+            {
+                "model": name,
+                "cv_accuracy_mean": float(scores["test_accuracy"].mean()),
+                "cv_f1_mean": float(scores["test_f1"].mean()),
+                "cv_roc_auc_mean": float(scores["test_roc_auc"].mean()),
+            }
+        )
+
+    return pd.DataFrame(rows).sort_values(by="cv_roc_auc_mean", ascending=False)
+
+
+def final_train_and_test(
+    X_train: pd.DataFrame,
+    X_test: pd.DataFrame,
+    y_train: pd.Series,
+    y_test: pd.Series,
+    preprocessor: ColumnTransformer,
+    model_name: str,
+    model: object,
+) -> tuple[Pipeline, dict[str, float | str]]:
+    pipeline = Pipeline(steps=[("prep", preprocessor), ("model", model)])
+    pipeline.fit(X_train, y_train)
+
+    y_pred = pipeline.predict(X_test)
+    y_proba = pipeline.predict_proba(X_test)[:, 1]
+
+    metrics = {
+        "model": model_name,
+        "test_accuracy": float(accuracy_score(y_test, y_pred)),
+        "test_f1": float(f1_score(y_test, y_pred)),
+        "test_roc_auc": float(roc_auc_score(y_test, y_proba)),
+        "classification_report": classification_report(y_test, y_pred),
+    }
+    return pipeline, metrics
+
+
+def main() -> None:
+    args = parse_args()
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    df = pd.read_csv(args.data)
+    if args.target not in df.columns:
+        raise ValueError(f"Target column '{args.target}' not found in dataset")
+
+    dropped = [col for col in args.id_columns if col in df.columns]
+    if dropped:
+        df = df.drop(columns=dropped)
+
+    y = df[args.target].astype(int)
+    X = df.drop(columns=[args.target])
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=args.test_size,
+        stratify=y,
+        random_state=args.seed,
+    )
+
+    preprocessor = build_preprocessor(X_train)
+    models = build_models(args.seed)
+    leaderboard = evaluate_models(X_train, y_train, preprocessor, models, args.seed)
+
+    best_model_name = leaderboard.iloc[0]["model"]
+    best_model = models[best_model_name]
+    pipeline, test_metrics = final_train_and_test(
+        X_train,
+        X_test,
+        y_train,
+        y_test,
+        preprocessor,
+        best_model_name,
+        best_model,
+    )
+
+    leaderboard_path = output_dir / "leaderboard.csv"
+    leaderboard.to_csv(leaderboard_path, index=False)
+
+    test_metrics_path = output_dir / "test_metrics.json"
+    test_metrics_path.write_text(json.dumps(test_metrics, indent=2))
+
+    model_path = output_dir / "best_model.joblib"
+    joblib.dump(pipeline, model_path)
+
+    print("\nModel comparison (CV):")
+    print(leaderboard.to_string(index=False))
+    print("\nBest model test metrics:")
+    print(json.dumps(test_metrics, indent=2))
+    print(f"\nSaved leaderboard to {leaderboard_path}")
+    print(f"Saved test metrics to {test_metrics_path}")
+    print(f"Saved best model to {model_path}")
+
+
+if __name__ == "__main__":
+    main()
